@@ -567,7 +567,10 @@ const App: React.FC = () => {
     }
   };
 
-  const completeCheckout = () => {
+  const PAYPAL_EMAIL = "divercityrecords@gmail.com";
+  const [checkoutMethod, setCheckoutMethod] = useState<"PAYPAL" | "EMAIL">("PAYPAL");
+
+  const completeCheckout = (method: "PAYPAL" | "EMAIL" = "EMAIL") => {
     if (cart.length === 0) return;
 
     if (!customerName || !address || !city || !state || !zipCode) {
@@ -575,6 +578,7 @@ const App: React.FC = () => {
       return;
     }
 
+    setCheckoutMethod(method);
     setInvoiceSent(true);
 
     // Calculate Totals for Email
@@ -617,18 +621,54 @@ TOTAL: $${total.toFixed(2)}
 Please send invoice and payment instructions.
     `.trim();
 
-    const subject = encodeURIComponent(`Order Request ${orderId}`);
-    const body = encodeURIComponent(rawBody);
-    const mailtoUrl = `mailto:divercityrecords@gmail.com?subject=${subject}&body=${body}`;
+    const openLink = (href: string, target: string) => {
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = target;
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
 
-    // Trigger mail app - using a dynamic link click is more reliable across mobile browsers and iframes
-    const mailLink = document.createElement("a");
-    mailLink.href = mailtoUrl;
-    // On some mobile devices, target="_blank" helps trigger the native app without navigating the current page
-    mailLink.target = "_self";
-    document.body.appendChild(mailLink);
-    mailLink.click();
-    document.body.removeChild(mailLink);
+    if (method === "PAYPAL") {
+      // PayPal "Add to cart / Buy now" upload: every paid item becomes a line, totals match the stash exactly.
+      const [first, ...rest] = customerName.trim().split(/\s+/);
+      const country = ({ USA: "US", Canada: "CA", UK: "GB" } as Record<string, string>)[shippingCountry] || "US";
+      const q = new URLSearchParams({
+        cmd: "_cart",
+        upload: "1",
+        business: PAYPAL_EMAIL,
+        currency_code: "USD",
+        invoice: orderId,
+        no_note: "1",
+        charset: "utf-8",
+        first_name: first || "",
+        last_name: rest.join(" "),
+        address1: address,
+        city,
+        state,
+        zip: zipCode,
+        country,
+        address_override: "1",
+        tax_cart: tax.toFixed(2),
+        handling_cart: shippingAmount.toFixed(2),
+      });
+      if (discount > 0) q.set("discount_amount_cart", discount.toFixed(2));
+      const paid = cart.filter((i) => !i.isPromo);
+      paid.forEach((i, n) => {
+        q.set(`item_name_${n + 1}`, i.name);
+        q.set(`amount_${n + 1}`, i.price.toFixed(2));
+        q.set(`quantity_${n + 1}`, String(i.quantity));
+      });
+      const freeNames = cart.filter((i) => i.isPromo).map((i) => i.name);
+      if (freeNames.length) q.set("custom", `Free seeds included: ${freeNames.join(", ")}`);
+      openLink(`https://www.paypal.com/cgi-bin/webscr?${q.toString()}`, "_blank");
+    } else {
+      const subject = encodeURIComponent(`Order Request ${orderId}`);
+      const body = encodeURIComponent(rawBody);
+      openLink(`mailto:${PAYPAL_EMAIL}?subject=${subject}&body=${body}`, "_self");
+    }
 
     // Add to history
     const newOrder: PastOrder = {
@@ -1354,9 +1394,9 @@ Please send invoice and payment instructions.
     const progress = Math.min(100, ((subtotal - discount) / 100) * 100);
 
     const steps = [
-      { icon: List, t: "Place order", d: "Submit your request" },
-      { icon: Search, t: "Verification", d: "We verify inventory" },
-      { icon: CreditCard, t: "Payment email", d: "Sent via PayPal" },
+      { icon: List, t: "Place order", d: "Pay with PayPal" },
+      { icon: Search, t: "Confirmation", d: "We confirm your order" },
+      { icon: CreditCard, t: "Receipt", d: "PayPal emails you" },
       { icon: Package, t: "We ship", d: "Your order is mailed" },
     ];
     const field = "w-full bg-white/[0.06] border border-white/10 rounded-2xl px-4 h-12 text-sm text-white";
@@ -1397,7 +1437,7 @@ Please send invoice and payment instructions.
               <div className="glass rounded-[2rem] p-6 md:p-7">
                 <div className="flex items-center justify-between mb-5">
                   <h3 className="eyebrow">How ordering works</h3>
-                  <span className="text-xs text-zinc-500 hidden sm:block">Orders are confirmed by email, not paid on-site</span>
+                  <span className="text-xs text-zinc-500 hidden sm:block">Payment is completed securely on PayPal</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 relative">
                   {steps.map((s, i) => (
@@ -1500,8 +1540,11 @@ Please send invoice and payment instructions.
                   </div>
                 </div>
 
-                <button onClick={completeCheckout} className="btn-primary w-full h-14 text-[15px] mb-5">
-                  Proceed to checkout <ArrowRight className="w-5 h-5" />
+                <button onClick={() => completeCheckout("PAYPAL")} className="btn-primary w-full h-14 text-[15px] mb-3">
+                  Pay with PayPal <ArrowRight className="w-5 h-5" />
+                </button>
+                <button onClick={() => completeCheckout("EMAIL")} className="btn-glass w-full h-12 text-sm mb-5">
+                  <Mail className="w-4 h-4" /> Or request an invoice by email
                 </button>
                 <div className="flex items-center gap-2.5 justify-center text-zinc-500">
                   <Lock className="w-3.5 h-3.5" />
@@ -1685,9 +1728,13 @@ Please send invoice and payment instructions.
             <div className="w-20 h-20 rounded-[1.6rem] bg-gradient-to-br from-emerald-300 to-teal-500 flex items-center justify-center mx-auto mb-6 shadow-[0_0_60px_-8px_rgba(20,184,166,0.9)]">
               <Mail className="w-10 h-10 text-[#04140e] animate-bounce" />
             </div>
-            <h3 className="text-3xl font-extrabold text-white mb-3 tracking-tighter">Opening your mail app</h3>
+            <h3 className="text-3xl font-extrabold text-white mb-3 tracking-tighter">{checkoutMethod === "PAYPAL" ? "Opening PayPal" : "Opening your mail app"}</h3>
             <p className="text-zinc-400 text-sm mb-7 leading-relaxed">
-              We're opening your default mail app to send the order request. Please hit <span className="text-emerald-300 font-bold">“Send”</span> to complete the order.
+              {checkoutMethod === "PAYPAL" ? (
+                <>We're opening PayPal in a new tab with your order filled in. Finish paying there to complete the order.</>
+              ) : (
+                <>We're opening your default mail app to send the order request. Please hit <span className="text-emerald-300 font-bold">“Send”</span> to complete the order.</>
+              )}
             </p>
             <div className="flex items-center justify-center gap-2.5 text-emerald-300 text-[11px] font-bold uppercase tracking-[0.22em]">
               <span className="w-2 h-2 bg-emerald-300 rounded-full animate-ping" />
